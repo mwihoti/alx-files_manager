@@ -1,7 +1,7 @@
 const sha1 = require('sha1');
 const dbClient = require('../utils/db');
 
-class UsersController {
+class UserController {
   /* create a new user */
   static async postNew(req, res) {
     const { email, password } = req.body;
@@ -39,4 +39,4 @@ class UsersController {
   }
 }
 
-module.exports = UsersController;
+module.exports = UserController;
