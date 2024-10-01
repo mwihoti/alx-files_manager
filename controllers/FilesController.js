@@ -2,9 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const mime = require('mime-types');
+const Bull = require('bull');
 const { ObjectId } = require('mongodb');
 const dbClient = require('../utils/db');
 const redisClient = require('../utils/redis');
+
+const fileQueue = new Bull('fileQueue');
 
 class FilesController {
   static async postUpload(req, res) {
@@ -61,6 +64,7 @@ class FilesController {
         ...fileDoc,
       });
     }
+
     const folderPath = process.env.FOLDER_PATH || '/tmp/files_manager';
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
@@ -79,6 +83,10 @@ class FilesController {
     fileDoc.localPath = localPath;
 
     const result = await dbClient.db.collection('files').insertOne(fileDoc);
+
+    if (type === 'image') {
+      fileQueue.add({ userId, fileId: result.insertedId });
+    }
 
     return res.status(201).json({
       id: result.insertedId,
@@ -274,6 +282,45 @@ class FilesController {
       const mimeType = mime.lookup(file.name);
       res.setHeader('Content-Type', mimeType);
       const fileContent = fs.readFileSync(filePath);
+      return res.status(200).send(fileContent);
+    } catch (error) {
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  // GET /files/:id/data (updated to handle size parameter for thumbnails)
+  static async getFileWithSize(req, res) {
+    const fileId = req.params.id;
+    const { size } = req.query;
+
+    if (!ObjectId.isValid(fileId)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    const file = await dbClient.db.collection('files').findOne({ _id: ObjectId(fileId) });
+    if (!file) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    const filePath = path.join('/path/to/files', file.localPath);
+    let fileToServe = filePath;
+
+    if (size && ['100', '250', '500'].includes(size)) {
+      const thumbnailPath = `${filePath}_${size}`;
+      if (!fs.existsSync(thumbnailPath)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      fileToServe = thumbnailPath;
+    }
+
+    if (!fs.existsSync(fileToServe)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    try {
+      const mimeType = mime.lookup(file.name);
+      res.setHeader('Content-Type', mimeType);
+      const fileContent = fs.readFileSync(fileToServe);
       return res.status(200).send(fileContent);
     } catch (error) {
       return res.status(500).json({ error: 'Internal server error' });
