@@ -84,6 +84,81 @@ class FilesController {
       ...fileDoc,
     });
   }
+
+  static async getShow(req, res) {
+    const token = req.headers['x-token'];
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const userId = await redisClient.get(`auth_${token}`);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const fileId = req.params.id;
+    if (!ObjectId.isValid(fileId)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    try {
+      const file = await dbClient.db.collection('files').findOne({ _id: ObjectId(fileId), userId });
+      if (!file) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      const response = {
+        id: file._id.toString(),
+        userId: file.userId,
+        name: file.name,
+        type: file.type,
+        isPublic: file.isPublic,
+        parentId: file.parentId.toString(),
+      };
+
+      return res.status(200).json(response);
+    } catch (error) {
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  static async getIndex(req, res) {
+    const token = req.headers['x-token'];
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const userId = await redisClient.get(`auth_${token}`);
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const parentId = req.query.parentId || 0;
+    const page = parseInt(req.query.page, 10) || 0;
+    const pageSize = 20;
+    const skip = page * pageSize;
+
+    const query = { userId, parentId: parentId === 0 ? 0 : ObjectId(parentId) };
+
+    try {
+      const files = await dbClient.db.collection('files')
+        .aggregate([
+          { $match: query },
+          { $skip: skip },
+          { $limit: pageSize },
+        ])
+        .toArray();
+      const formattedFiles = files.map((file) => ({
+        id: file._id.toString(),
+        userId: file.userId,
+        name: file.name,
+        type: file.type,
+        isPublic: file.isPublic,
+        parentId: file.parentId.toString(),
+      }));
+
+      return res.status(200).json(formattedFiles);
+    } catch (error) {
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
 }
 
 module.exports = FilesController;
